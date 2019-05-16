@@ -1,25 +1,13 @@
 package com.dantorrey;
 
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.UUID;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-
+import com.google.common.io.ByteStreams;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.RandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchAsyncClient;
@@ -38,7 +26,26 @@ import software.amazon.kinesis.lifecycle.events.ShardEndedInput;
 import software.amazon.kinesis.lifecycle.events.ShutdownRequestedInput;
 import software.amazon.kinesis.processor.ShardRecordProcessor;
 import software.amazon.kinesis.processor.ShardRecordProcessorFactory;
+import software.amazon.kinesis.retrieval.KinesisClientRecord;
 import software.amazon.kinesis.retrieval.polling.PollingConfig;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
+import java.util.zip.GZIPInputStream;
 
 /**
  * A CloudWatchKinesis tester client.
@@ -47,6 +54,7 @@ import software.amazon.kinesis.retrieval.polling.PollingConfig;
 public class LoopbackTester {
 
     private static final Logger log = LoggerFactory.getLogger(LoopbackTester.class);
+    public static final int MAX_GZIP_BYTES = 21803912;
 
     public static void main(String... args) {
         if (args.length < 1) {
@@ -126,7 +134,7 @@ public class LoopbackTester {
         PutRecordRequest request = PutRecordRequest.builder()
                                                    .partitionKey(RandomStringUtils.randomAlphabetic(5, 20))
                                                    .streamName(streamName)
-                                                   .data(SdkBytes.fromByteArray(RandomUtils.nextBytes(10)))
+                                                   .data(SdkBytes.fromUtf8String("hahaha"))
                                                    .build();
         try {
             kinesisClient.putRecord(request).get();
@@ -172,7 +180,31 @@ public class LoopbackTester {
             MDC.put(SHARD_ID_MDC_KEY, shardId);
             try {
                 log.info("Processing {} record(s)", processRecordsInput.records().size());
-                processRecordsInput.records().forEach(r -> log.info("Processing record pk: {} -- Seq: {}", r.partitionKey(), r.sequenceNumber()));
+                Consumer<KinesisClientRecord> method = r -> {
+                    log.info("Processing record pk: {} -- Seq: {}", r.partitionKey(), r.sequenceNumber());
+
+
+                    final ByteBuffer dataBuffer = processRecordsInput.records().get(0).data().asReadOnlyBuffer();
+                    final byte[] dataBytes = new byte[dataBuffer.remaining()];
+                    dataBuffer.get(dataBytes);
+
+                    final ByteArrayInputStream dataStream = new ByteArrayInputStream(dataBytes);
+                    final GZIPInputStream in;
+                    try {
+                        in = new GZIPInputStream(dataStream);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        return;
+                    }
+                    final InputStream limited = ByteStreams.limit(in, MAX_GZIP_BYTES);
+                    try {
+                        log.info(new String(ByteStreams.toByteArray(limited), StandardCharsets.UTF_8));
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                };
+
+                processRecordsInput.records().forEach(method);
             } catch (Throwable t) {
                 log.error("Caught throwable while processing records. Aborting.");
                 Runtime.getRuntime().halt(1);
