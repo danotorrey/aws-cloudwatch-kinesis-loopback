@@ -131,6 +131,7 @@ public class LoopbackTester {
 
     // We won't need to publish data, because CloudWatch is going to do that for us.
     private void publishRecord() {
+        log.info("Publishing a record");
         PutRecordRequest request = PutRecordRequest.builder()
                                                    .partitionKey(RandomStringUtils.randomAlphabetic(5, 20))
                                                    .streamName(streamName)
