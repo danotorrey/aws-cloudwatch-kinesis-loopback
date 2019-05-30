@@ -4,7 +4,6 @@ package com.dantorrey;
 import com.google.common.io.ByteStreams;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.RandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -17,8 +16,6 @@ import software.amazon.awssdk.services.kinesis.model.PutRecordRequest;
 import software.amazon.kinesis.common.ConfigsBuilder;
 import software.amazon.kinesis.common.KinesisClientUtil;
 import software.amazon.kinesis.coordinator.Scheduler;
-import software.amazon.kinesis.exceptions.InvalidStateException;
-import software.amazon.kinesis.exceptions.ShutdownException;
 import software.amazon.kinesis.lifecycle.events.InitializationInput;
 import software.amazon.kinesis.lifecycle.events.LeaseLostInput;
 import software.amazon.kinesis.lifecycle.events.ProcessRecordsInput;
@@ -55,6 +52,7 @@ public class LoopbackTester {
 
     private static final Logger log = LoggerFactory.getLogger(LoopbackTester.class);
     public static final int MAX_GZIP_BYTES = 21803912;
+    public static final boolean DO_PUBLISH = false;
 
     public static void main(String... args) {
         if (args.length < 1) {
@@ -87,7 +85,8 @@ public class LoopbackTester {
 
         DynamoDbAsyncClient dynamoClient = DynamoDbAsyncClient.builder().region(region).build();
         CloudWatchAsyncClient cloudWatchClient = CloudWatchAsyncClient.builder().region(region).build();
-        ConfigsBuilder configsBuilder = new ConfigsBuilder(streamName, streamName, kinesisClient, dynamoClient, cloudWatchClient, UUID.randomUUID().toString(), new SampleRecordProcessorFactory());
+        String workerIdentifier = UUID.randomUUID().toString();
+        ConfigsBuilder configsBuilder = new ConfigsBuilder(streamName, workerIdentifier, kinesisClient, dynamoClient, cloudWatchClient, workerIdentifier, new SampleRecordProcessorFactory());
 
         Scheduler scheduler = new Scheduler(
                 configsBuilder.checkpointConfig(),
@@ -131,18 +130,20 @@ public class LoopbackTester {
 
     // We won't need to publish data, because CloudWatch is going to do that for us.
     private void publishRecord() {
-        log.info("Publishing a record");
-        PutRecordRequest request = PutRecordRequest.builder()
-                                                   .partitionKey(RandomStringUtils.randomAlphabetic(5, 20))
-                                                   .streamName(streamName)
-                                                   .data(SdkBytes.fromUtf8String("hahaha"))
-                                                   .build();
-        try {
-            kinesisClient.putRecord(request).get();
-        } catch (InterruptedException e) {
-            log.info("Interrupted, assuming shutdown.");
-        } catch (ExecutionException e) {
-            log.error("Exception while sending data to Kinesis. Will try again next cycle.", e);
+        if (DO_PUBLISH) {
+            log.info("Publishing a record");
+            PutRecordRequest request = PutRecordRequest.builder()
+                                                       .partitionKey(RandomStringUtils.randomAlphabetic(5, 20))
+                                                       .streamName(streamName)
+                                                       .data(SdkBytes.fromUtf8String("hahaha"))
+                                                       .build();
+            try {
+                kinesisClient.putRecord(request).get();
+            } catch (InterruptedException e) {
+                log.info("Interrupted, assuming shutdown.");
+            } catch (ExecutionException e) {
+                log.error("Exception while sending data to Kinesis. Will try again next cycle.", e);
+            }
         }
     }
 
@@ -181,6 +182,7 @@ public class LoopbackTester {
             MDC.put(SHARD_ID_MDC_KEY, shardId);
             try {
                 log.info("Processing {} record(s)", processRecordsInput.records().size());
+
                 Consumer<KinesisClientRecord> method = r -> {
                     log.info("Processing record pk: {} -- Seq: {}", r.partitionKey(), r.sequenceNumber());
 
@@ -190,16 +192,8 @@ public class LoopbackTester {
                     dataBuffer.get(dataBytes);
 
                     final ByteArrayInputStream dataStream = new ByteArrayInputStream(dataBytes);
-                    final GZIPInputStream in;
                     try {
-                        in = new GZIPInputStream(dataStream);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        return;
-                    }
-                    final InputStream limited = ByteStreams.limit(in, MAX_GZIP_BYTES);
-                    try {
-                        log.info(new String(ByteStreams.toByteArray(limited), StandardCharsets.UTF_8));
+                        log.info(new String(ByteStreams.toByteArray(dataStream), StandardCharsets.UTF_8));
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
@@ -229,8 +223,8 @@ public class LoopbackTester {
             MDC.put(SHARD_ID_MDC_KEY, shardId);
             try {
                 log.info("Reached shard end checkpointing.");
-                shardEndedInput.checkpointer().checkpoint();
-            } catch (ShutdownException | InvalidStateException e) {
+//                shardEndedInput.checkpointer().checkpoint();
+            } catch (Exception e) {
                 log.error("Exception while checkpointing at shard end. Giving up.", e);
             } finally {
                 MDC.remove(SHARD_ID_MDC_KEY);
@@ -243,8 +237,8 @@ public class LoopbackTester {
             MDC.put(SHARD_ID_MDC_KEY, shardId);
             try {
                 log.info("Scheduler is shutting down, checkpointing.");
-                shutdownRequestedInput.checkpointer().checkpoint();
-            } catch (ShutdownException | InvalidStateException e) {
+//                shutdownRequestedInput.checkpointer().checkpoint();
+            } catch (Exception e) {
                 log.error("Exception while checkpointing at requested shutdown. Giving up.", e);
             } finally {
                 MDC.remove(SHARD_ID_MDC_KEY);

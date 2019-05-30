@@ -5,12 +5,13 @@
             <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
         </Console>
     </Appenders>
+
     <Loggers>
-        <Logger name="software.amazon" level="TRACE">
-            <AppenderRef ref="Console"/>
-        </Logger>
         <Root level="INFO">
             <AppenderRef ref="Console"/>
         </Root>
+        <Logger name="software.amazon" level="debug">
+            <AppenderRef ref="CONSOLE"/>
+        </Logger>
     </Loggers>
 </Configuration>
