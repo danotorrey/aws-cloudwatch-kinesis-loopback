@@ -10,8 +10,21 @@
         <Root level="INFO">
             <AppenderRef ref="Console"/>
         </Root>
-        <Logger name="software.amazon" level="debug">
-            <AppenderRef ref="CONSOLE"/>
+        <Logger name="software.amazon.kinesis" level="trace">
+            <AppenderRef ref="Console"/>
         </Logger>
+
+        <Logger name="software.amazon.kinesis.metrics.CloudWatchPublisherRunnable" level="info">
+            <AppenderRef ref="Console"/>
+        </Logger>
+
+        <Logger name="software.amazon.kinesis.retrieval.polling.PrefetchRecordsPublisher" level="info">
+            <AppenderRef ref="Console"/>
+        </Logger>
+
+        <Logger name="software.amazon.kinesis.leases.dynamodb" level="info">
+            <AppenderRef ref="Console"/>
+        </Logger>
+
     </Loggers>
 </Configuration>
